@@ -1,0 +1,155 @@
+/** System Health Status Interface */
+export interface HealthStatus {
+  status: 'healthy' | 'unhealthy' | 'unknown';
+  service: string;
+  version: string;
+  environment: string;
+  timestamp: string;
+}
+
+/** Crawl Status State */
+export type CrawlStatus = 'idle' | 'running' | 'completed' | 'failed';
+
+/** Crawl Request Payload sent to POST /api/v1/crawl */
+export interface CrawlRequest {
+  url: string;
+  max_depth: number;
+  max_pages: number;
+  request_delay?: number;
+  respect_robots_txt?: boolean;
+  timeout?: number;
+}
+
+/** Discovered Page representation returned by backend */
+export interface PageResponse {
+  url: string;
+  normalized_url: string;
+  parent_url: string | null;
+  depth: number;
+  title: string | null;
+  status_code: number | null;
+  content_type: string | null;
+  internal_links: string[];
+  external_links: string[];
+  crawl_success: boolean;
+  error_message: string | null;
+  response_time: number;
+  discovered_at: string;
+}
+
+/** Complete summary report returned by backend POST /api/v1/crawl or GET /api/v1/crawls/{id} */
+export interface CrawlResponse {
+  crawl_id?: number | null;
+  starting_url: string;
+  normalized_starting_url: string;
+  domain: string;
+  total_pages: number;
+  successful_pages: number;
+  failed_pages: number;
+  total_internal_links: number;
+  total_external_links: number;
+  max_depth_reached: number;
+  pages: PageResponse[];
+  errors: string[];
+  duration_seconds: number;
+  completed_at: string;
+}
+
+/** Summary item returned by GET /api/v1/crawls history listing */
+export interface CrawlHistoryItem {
+  crawl_id: number;
+  starting_url: string;
+  normalized_starting_url: string;
+  domain: string;
+  total_pages: number;
+  successful_pages: number;
+  failed_pages: number;
+  duration_seconds: number;
+  created_at: string;
+}
+
+/** Response payload returned when deleting a crawl */
+export interface DeleteCrawlResponse {
+  message: string;
+  crawl_id: number;
+}
+
+/** Error payload returned by backend when crawl fails */
+export interface CrawlErrorResponse {
+  detail: string;
+}
+
+/** Diagnostic Issue Item */
+export interface DiagnosticIssue {
+  severity: 'critical' | 'error' | 'warning' | 'info';
+  category: string;
+  message: string;
+  affected_count: number;
+  affected_urls: string[];
+}
+
+/** Health Score Point Deduction Entry */
+export interface ScoreDeduction {
+  reason: string;
+  deduction: number;
+}
+
+/** HTTP Status Code Distribution */
+export interface StatusDistribution {
+  count_2xx: number;
+  count_3xx: number;
+  count_4xx: number;
+  count_5xx: number;
+  count_other: number;
+  exact_status_counts: Record<string, number>;
+}
+
+/** Comprehensive Link Statistics */
+export interface LinkStatistics {
+  total_internal_links: number;
+  unique_internal_links: number;
+  verified_internal_ok: number;
+  verified_internal_broken: number;
+  unverified_internal: number;
+  total_external_links: number;
+  unique_external_links: number;
+  unverified_external: number;
+}
+
+/** Depth Distribution Statistics */
+export interface DepthStatistics {
+  min_depth: number;
+  max_depth_reached: number;
+  average_depth: number;
+  depth_counts: Record<string, number>;
+}
+
+/** HTML Title Statistics */
+export interface TitleStatistics {
+  total_with_title: number;
+  missing_title_count: number;
+  duplicate_title_count: number;
+  missing_title_urls: string[];
+  duplicate_title_groups: Record<string, string[]>;
+}
+
+/** Complete Website Health Diagnostics Report */
+export interface DiagnosticsResponse {
+  crawl_id: number | null;
+  starting_url: string;
+  domain: string;
+  health_score: number;
+  health_status: 'Excellent' | 'Good' | 'Needs Attention' | 'Poor';
+  total_pages: number;
+  successful_pages: number;
+  failed_pages: number;
+  score_breakdown: ScoreDeduction[];
+  status_distribution: StatusDistribution;
+  link_statistics: LinkStatistics;
+  depth_statistics: DepthStatistics;
+  title_statistics: TitleStatistics;
+  potential_orphans_count: number;
+  potential_orphan_urls: string[];
+  robots_blocked_count: number;
+  issues: DiagnosticIssue[];
+}
