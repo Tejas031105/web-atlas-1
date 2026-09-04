@@ -1,24 +1,24 @@
 """Crawl API Endpoint Router."""
 
+import json
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.services.crawl_persistence import save_crawl_result
-from app.crawler import (
-    WebAtlasCrawler,
-    CrawlConfig,
-    CrawlerError,
-    FetchError,
-    InvalidURLError,
-    RobotsBlockedError,
+from app.services.crawl_persistence import (
+    create_initial_crawl,
+    update_crawl_task_id,
+    get_crawl_by_id,
 )
+from app.crawler.url_utils import normalize_url, extract_domain, is_crawlable_scheme
+from app.tasks.crawl_tasks import execute_crawl_task
 from app.schemas.crawl import (
     CrawlRequest,
     CrawlResponse,
+    CrawlStatusResponse,
     CrawlErrorResponse,
-    PageResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,22 +30,21 @@ router = APIRouter(prefix="/crawl", tags=["Crawler"])
     "",
     response_model=CrawlResponse,
     status_code=status.HTTP_200_OK,
-    summary="Crawl Website",
+    summary="Crawl Website (Queued)",
     description=(
-        "Initiates a recursive internal page discovery crawl starting from the provided website URL. "
-        "Respects robots.txt rules, maximum depth boundaries, and max page limits. "
-        "Saves completed crawls and discovered pages to local database storage."
+        "Enqueues a background website crawl job. Creates a database crawl record with QUEUED status, "
+        "submits a Celery background task, and immediately returns the crawl session and task identifiers."
     ),
     responses={
-        400: {"model": CrawlErrorResponse, "description": "Invalid URL or target website unreachable"},
+        400: {"model": CrawlErrorResponse, "description": "Invalid URL format or scheme"},
         422: {"description": "Validation error in request parameters"},
-        500: {"model": CrawlErrorResponse, "description": "Internal server error during crawl operation"},
+        500: {"model": CrawlErrorResponse, "description": "Internal server error queuing crawl job"},
     },
 )
 async def crawl_website(
     request: CrawlRequest, db: Session = Depends(get_db)
 ) -> CrawlResponse:
-    """Execute website crawl request asynchronously, persist results, and return page map data."""
+    """Enqueue website crawl request into Celery background worker system and return session ID."""
     logger.info(
         "Received crawl request for URL: %s (max_depth=%d, max_pages=%d)",
         request.url,
@@ -53,103 +52,128 @@ async def crawl_website(
         request.max_pages,
     )
 
-    # Build crawler configuration
-    config = CrawlConfig(
-        max_pages=request.max_pages,
-        max_depth=request.max_depth,
-        delay=request.request_delay,
-        respect_robots_txt=request.respect_robots_txt,
-        timeout=request.timeout,
-    )
-
-    crawler = WebAtlasCrawler(config)
-
     try:
-        crawl_result = await crawler.crawl(request.url)
-    except InvalidURLError as err:
-        logger.warning("Invalid URL supplied to crawl API: %s", err.message)
+        norm_url = normalize_url(request.url)
+        if not is_crawlable_scheme(norm_url):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported website URL scheme: {request.url}",
+            )
+        domain = extract_domain(norm_url)
+    except HTTPException:
+        raise
+    except Exception as err:
+        logger.warning("Invalid URL scheme or format provided: %s", err)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid website URL provided: {err.message}",
+            detail=f"Invalid website URL provided: {err}",
         )
-    except RobotsBlockedError as err:
-        logger.warning("Target URL blocked by robots.txt: %s", err.url)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Target URL access is prohibited by robots.txt rules.",
-        )
-    except FetchError as err:
-        logger.warning("Fetch failure during crawl: %s", err.message)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unable to reach target website: {err.message}",
-        )
-    except CrawlerError as err:
-        logger.error("Crawler engine error: %s", err.message)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"WebAtlas crawler error: {err.message}",
+
+    eff_render_mode = request.render_mode or "auto"
+
+    # 1. Create initial DB record with QUEUED status
+    try:
+        crawl_record = create_initial_crawl(
+            db,
+            starting_url=request.url,
+            normalized_starting_url=norm_url,
+            domain=domain,
+            max_depth=request.max_depth,
+            max_pages=request.max_pages,
+            render_mode=eff_render_mode,
         )
     except Exception as err:
-        logger.exception("Unexpected exception executing crawl for %s: %s", request.url, err)
+        logger.error("Failed to create initial database crawl record: %s", err)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected internal error occurred while processing the website crawl.",
+            detail="Failed to initialize crawl record in database.",
         )
 
-    # Check if starting URL failed to fetch completely
-    if crawl_result.total_pages == 0:
-        error_msg = (
-            crawl_result.errors[0]
-            if crawl_result.errors
-            else "Unable to fetch or parse starting page."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Crawl failed for target URL: {error_msg}",
-        )
-
-    # Transactionally persist crawl result and pages into SQLite DB
-    saved_crawl_record = None
+    # 2. Dispatch Celery background task
     try:
-        saved_crawl_record = save_crawl_result(db, crawl_result, config)
-    except Exception as err:
-        logger.error("Failed to persist crawl result to SQLite database: %s", err)
-        # Crawl executed successfully, so log warning without failing API response
-
-    # Convert CrawlResult PageResults to PageResponse schemas
-    pages_list = [
-        PageResponse(
-            url=p.url,
-            normalized_url=p.normalized_url,
-            parent_url=p.parent_url,
-            depth=p.depth,
-            title=p.title,
-            status_code=p.status_code,
-            content_type=p.content_type,
-            internal_links=p.internal_links,
-            external_links=p.external_links,
-            crawl_success=p.crawl_success,
-            error_message=p.error_message,
-            response_time=p.response_time,
-            discovered_at=p.discovered_at,
+        task = execute_crawl_task.delay(
+            crawl_id=crawl_record.id,
+            starting_url=request.url,
+            max_depth=request.max_depth,
+            max_pages=request.max_pages,
+            request_delay=request.request_delay,
+            respect_robots_txt=request.respect_robots_txt,
+            timeout=request.timeout,
+            render_mode=eff_render_mode,
         )
-        for p in crawl_result.pages
-    ]
+        update_crawl_task_id(db, crawl_record.id, task.id)
+        task_id = task.id
+    except Exception as err:
+        logger.error("Failed to queue Celery crawl task: %s", err)
+        task_id = None
 
     return CrawlResponse(
-        crawl_id=saved_crawl_record.id if saved_crawl_record else None,
-        starting_url=crawl_result.starting_url,
-        normalized_starting_url=crawl_result.normalized_starting_url,
-        domain=crawl_result.domain,
-        total_pages=crawl_result.total_pages,
-        successful_pages=crawl_result.successful_pages,
-        failed_pages=crawl_result.failed_pages,
-        total_internal_links=crawl_result.total_internal_links,
-        total_external_links=crawl_result.total_external_links,
-        max_depth_reached=crawl_result.max_depth_reached,
-        pages=pages_list,
-        errors=crawl_result.errors,
-        duration_seconds=crawl_result.duration_seconds,
-        completed_at=crawl_result.completed_at,
+        crawl_id=crawl_record.id,
+        task_id=task_id,
+        status="QUEUED",
+        starting_url=request.url,
+        normalized_starting_url=norm_url,
+        domain=domain,
+        total_pages=0,
+        successful_pages=0,
+        failed_pages=0,
+        total_internal_links=0,
+        total_external_links=0,
+        max_depth_reached=0,
+        pages=[],
+        errors=[],
+        duration_seconds=0.0,
+        completed_at=crawl_record.created_at or datetime.now(timezone.utc),
+    )
+
+
+@router.get(
+    "/{crawl_id}/status",
+    response_model=CrawlStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get Crawl Execution Status",
+    description="Check the current status (QUEUED, RUNNING, COMPLETED, FAILED) and summary statistics of a crawl job.",
+    responses={
+        404: {"model": CrawlErrorResponse, "description": "Crawl record not found"},
+    },
+)
+async def get_crawl_status(
+    crawl_id: int, db: Session = Depends(get_db)
+) -> CrawlStatusResponse:
+    """Retrieve execution status and current metric counters of a background crawl session."""
+    record = get_crawl_by_id(db, crawl_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Crawl record with ID #{crawl_id} not found.",
+        )
+
+    max_p = record.max_pages_requested if record.max_pages_requested is not None else 50
+    progress_pct = (
+        min(round((record.total_pages / max_p) * 100.0, 1), 100.0)
+        if max_p > 0
+        else None
+    )
+    errors = json.loads(record.errors_json) if record.errors_json else []
+    error_str = errors[-1] if errors and record.status == "FAILED" else None
+
+    return CrawlStatusResponse(
+        crawl_id=record.id,
+        task_id=record.task_id,
+        status=record.status,
+        starting_url=record.starting_url,
+        domain=record.domain,
+        pages_discovered=record.pages_discovered or record.total_pages,
+        pages_crawled=record.total_pages,
+        pages_failed=record.failed_pages,
+        successful_pages=record.successful_pages,
+        current_depth=record.current_depth,
+        max_depth=record.max_depth_requested,
+        max_pages=max_p,
+        progress_percent=progress_pct,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        error=error_str,
+        errors=errors,
+        duration_seconds=record.duration_seconds,
     )

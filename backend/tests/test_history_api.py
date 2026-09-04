@@ -43,46 +43,16 @@ def client():
 
 
 def test_db_persistence_and_crawl_id(client):
-    """Verify executing crawl saves record to DB and returns crawl_id."""
-    mock_result = CrawlResult(
-        starting_url="https://dbtest.com",
-        normalized_starting_url="https://dbtest.com/",
-        domain="dbtest.com",
-        total_pages=1,
-        successful_pages=1,
-        failed_pages=0,
-        total_internal_links=0,
-        total_external_links=0,
-        max_depth_reached=0,
-        pages=[
-            PageResult(
-                url="https://dbtest.com/",
-                normalized_url="https://dbtest.com/",
-                parent_url=None,
-                depth=0,
-                title="DB Test Page",
-                status_code=200,
-                content_type="text/html",
-                internal_links=[],
-                external_links=[],
-                crawl_success=True,
-                response_time=0.05,
-            )
-        ],
-        errors=[],
-        duration_seconds=0.1,
-    )
-
-    with patch("app.api.v1.crawl.WebAtlasCrawler") as MockCrawlerCls:
-        mock_instance = AsyncMock()
-        mock_instance.crawl.return_value = mock_result
-        MockCrawlerCls.return_value = mock_instance
+    """Verify executing crawl saves initial record to DB and returns crawl_id."""
+    with patch("app.api.v1.crawl.execute_crawl_task.delay") as mock_delay:
+        mock_delay.return_value.id = "test-task-history-id"
 
         res = client.post("/api/v1/crawl", json={"url": "https://dbtest.com"})
         assert res.status_code == 200
         data = res.json()
         assert "crawl_id" in data
         assert data["crawl_id"] is not None
+        assert data["status"] == "QUEUED"
         crawl_id = data["crawl_id"]
 
         # Verify DB query
@@ -90,8 +60,7 @@ def test_db_persistence_and_crawl_id(client):
         record = db.query(CrawlModel).filter(CrawlModel.id == crawl_id).first()
         assert record is not None
         assert record.domain == "dbtest.com"
-        assert len(record.pages) == 1
-        assert record.pages[0].title == "DB Test Page"
+        assert record.status == "QUEUED"
         db.close()
 
 

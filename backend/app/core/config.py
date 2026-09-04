@@ -24,6 +24,15 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
 
+    # Celery & Redis Configuration
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+
+    # Playwright Browser Configuration
+    PLAYWRIGHT_HEADLESS: bool = True
+    PLAYWRIGHT_TIMEOUT: float = 30.0
+    PLAYWRIGHT_WAIT_UNTIL: str = "domcontentloaded"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

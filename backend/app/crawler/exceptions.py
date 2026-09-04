@@ -18,7 +18,7 @@ class CrawlerError(Exception):
 class FetchError(CrawlerError):
     """Raised when an HTTP request fails, times out, or returns a non-200 status."""
 
-    def __init__(self, message: str, url: str, status_code: int | None = None):
+    def __init__(self, message: str, url: str | None = None, status_code: int | None = None):
         super().__init__(message, url)
         self.status_code = status_code
 

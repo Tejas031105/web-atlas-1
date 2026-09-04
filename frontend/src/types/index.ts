@@ -8,7 +8,10 @@ export interface HealthStatus {
 }
 
 /** Crawl Status State */
-export type CrawlStatus = 'idle' | 'running' | 'completed' | 'failed';
+export type CrawlStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed';
+
+/** Render Mode options supported by WebAtlas crawler */
+export type RenderMode = 'auto' | 'httpx' | 'playwright';
 
 /** Crawl Request Payload sent to POST /api/v1/crawl */
 export interface CrawlRequest {
@@ -18,6 +21,7 @@ export interface CrawlRequest {
   request_delay?: number;
   respect_robots_txt?: boolean;
   timeout?: number;
+  render_mode?: RenderMode;
 }
 
 /** Discovered Page representation returned by backend */
@@ -40,6 +44,8 @@ export interface PageResponse {
 /** Complete summary report returned by backend POST /api/v1/crawl or GET /api/v1/crawls/{id} */
 export interface CrawlResponse {
   crawl_id?: number | null;
+  task_id?: string | null;
+  status?: string;
   starting_url: string;
   normalized_starting_url: string;
   domain: string;
@@ -53,6 +59,28 @@ export interface CrawlResponse {
   errors: string[];
   duration_seconds: number;
   completed_at: string;
+}
+
+/** Detailed progress and execution status returned by GET /api/v1/crawl/{crawl_id}/status */
+export interface CrawlStatusResponse {
+  crawl_id: number;
+  task_id?: string | null;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | string;
+  starting_url: string;
+  domain: string;
+  pages_discovered: number;
+  pages_crawled: number;
+  pages_failed: number;
+  successful_pages: number;
+  current_depth: number;
+  max_depth: number;
+  max_pages: number;
+  progress_percent: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error?: string | null;
+  errors: string[];
+  duration_seconds: number;
 }
 
 /** Summary item returned by GET /api/v1/crawls history listing */

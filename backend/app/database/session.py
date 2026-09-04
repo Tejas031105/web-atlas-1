@@ -37,8 +37,38 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def _auto_migrate_schema() -> None:
+    """Ensure database tables and progress tracking columns exist automatically on import."""
+    try:
+        from sqlalchemy import text
+        import app.models  # noqa: F401
+        Base.metadata.create_all(bind=engine)
+        with engine.connect() as conn:
+            result = conn.execute(text("PRAGMA table_info(crawls)")).fetchall()
+            col_names = [r[1] for r in result]
+            if result:
+                if "task_id" not in col_names:
+                    conn.execute(text("ALTER TABLE crawls ADD COLUMN task_id VARCHAR(255)"))
+                if "max_pages_requested" not in col_names:
+                    conn.execute(text("ALTER TABLE crawls ADD COLUMN max_pages_requested INTEGER DEFAULT 50"))
+                if "pages_discovered" not in col_names:
+                    conn.execute(text("ALTER TABLE crawls ADD COLUMN pages_discovered INTEGER DEFAULT 0"))
+                if "current_depth" not in col_names:
+                    conn.execute(text("ALTER TABLE crawls ADD COLUMN current_depth INTEGER DEFAULT 0"))
+                if "started_at" not in col_names:
+                    conn.execute(text("ALTER TABLE crawls ADD COLUMN started_at DATETIME"))
+                if "completed_at" not in col_names:
+                    conn.execute(text("ALTER TABLE crawls ADD COLUMN completed_at DATETIME"))
+                if "render_mode" not in col_names:
+                    conn.execute(text("ALTER TABLE crawls ADD COLUMN render_mode VARCHAR(50) DEFAULT 'auto'"))
+                conn.commit()
+    except Exception:
+        pass
+
+
+_auto_migrate_schema()
+
+
 def init_db() -> None:
     """Initialize database tables idempotently."""
-    # Ensure all ORM models are registered prior to create_all
-    import app.models  # noqa: F401
-    Base.metadata.create_all(bind=engine)
+    _auto_migrate_schema()

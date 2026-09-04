@@ -8,6 +8,8 @@ import { PageDetailsPanel } from '../components/PageDetailsPanel';
 import { CrawlResultsTable, StatusFilterType } from '../components/CrawlResultsTable';
 import { CrawlHistoryTable } from '../components/CrawlHistoryTable';
 import { ExportCard } from '../components/ExportCard';
+import { CrawlProgressCard } from '../components/CrawlProgressCard';
+import { useCrawlStatus } from '../hooks/useCrawlStatus';
 import { startCrawl } from '../services/crawlService';
 import { fetchCrawlHistory, fetchCrawlById, deleteCrawlById } from '../services/historyService';
 import { fetchCrawlDiagnostics } from '../services/diagnosticsService';
@@ -24,6 +26,15 @@ export const Dashboard: React.FC = () => {
   const [historyLoading, setHistoryLoading] = useState<boolean>(false);
   const [isHistoricalView, setIsHistoricalView] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Background Job Polling States
+  const [activeCrawlId, setActiveCrawlId] = useState<number | null>(null);
+  const [isPollingActive, setIsPollingActive] = useState<boolean>(false);
+
+  const { statusData, error: statusError, isPolling } = useCrawlStatus(
+    activeCrawlId,
+    isPollingActive
+  );
 
   // Synchronized Filter States
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -91,6 +102,46 @@ export const Dashboard: React.FC = () => {
     }
   }, [crawlResult, loadDiagnosticsForCrawl]);
 
+  // Handle completion/failure transitions from polling hook
+  useEffect(() => {
+    if (!statusData || !activeCrawlId) return;
+
+    if (statusData.status === 'COMPLETED') {
+      setIsPollingActive(false);
+      fetchCrawlById(activeCrawlId)
+        .then((fullData) => {
+          setCrawlResult(fullData);
+          if (fullData.pages && fullData.pages.length > 0) {
+            const root = fullData.pages.find(
+              (p) => p.normalized_url === fullData.normalized_starting_url || p.depth === 0
+            );
+            setSelectedPage(root || fullData.pages[0]);
+          }
+          loadHistory();
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : 'Failed to load completed crawl details.');
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    } else if (statusData.status === 'FAILED') {
+      setIsPollingActive(false);
+      setError(statusData.error || 'Crawl task failed.');
+      loadHistory();
+      setLoading(false);
+    }
+  }, [statusData, activeCrawlId, loadHistory]);
+
+  // Handle status polling error transitions to prevent stuck loading state
+  useEffect(() => {
+    if (statusError && isPollingActive) {
+      setError(statusError);
+      setIsPollingActive(false);
+      setLoading(false);
+    }
+  }, [statusError, isPollingActive]);
+
   const handleStartCrawl = async (request: CrawlRequest) => {
     setLoading(true);
     setError(null);
@@ -100,21 +151,19 @@ export const Dashboard: React.FC = () => {
 
     try {
       const result = await startCrawl(request);
-      setCrawlResult(result);
-      if (result.pages.length > 0) {
-        const root = result.pages.find(
-          (p) => p.normalized_url === result.normalized_starting_url || p.depth === 0
-        );
-        setSelectedPage(root || result.pages[0]);
+      if (result.crawl_id) {
+        setActiveCrawlId(result.crawl_id);
+        setIsPollingActive(true);
+        setCrawlResult(result);
+      } else {
+        throw new Error('Backend failed to return a valid crawl identifier.');
       }
-      loadHistory();
     } catch (err) {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('An unexpected error occurred while executing the website crawl.');
+        setError('An unexpected error occurred while queuing the website crawl.');
       }
-    } finally {
       setLoading(false);
     }
   };
@@ -180,6 +229,15 @@ export const Dashboard: React.FC = () => {
               <p className="mt-0.5 text-xs text-[#DC2626]">{error}</p>
             </div>
           </div>
+        )}
+
+        {/* Live Background Crawl Progress Card */}
+        {(isPollingActive || statusData || (crawlResult && (crawlResult.status === 'QUEUED' || crawlResult.status === 'RUNNING'))) && (
+          <CrawlProgressCard
+            statusData={statusData}
+            isPolling={isPolling}
+            error={statusError}
+          />
         )}
 
         {/* Results Source Indicator Header */}

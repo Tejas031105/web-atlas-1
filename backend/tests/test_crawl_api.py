@@ -1,12 +1,12 @@
-"""API Integration Unit Tests for Crawl Router."""
+"""API Integration Unit Tests for Crawl Router, Status Tracking, and Progress Calculation."""
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.crawler.models import CrawlResult, PageResult
-from app.crawler.exceptions import FetchError, InvalidURLError
+from app.database.session import SessionLocal
+from app.services.crawl_persistence import update_crawl_progress, update_crawl_running_status
 
 client = TestClient(app)
 
@@ -16,7 +16,7 @@ client = TestClient(app)
 # ------------------------------------------------------------------------------
 
 def test_health_endpoints_still_working():
-    """Verify health check endpoints remain functional after adding crawl router."""
+    """Verify health check endpoints remain functional."""
     res1 = client.get("/health")
     assert res1.status_code == 200
     assert res1.json()["status"] == "healthy"
@@ -45,83 +45,36 @@ def test_crawl_api_unsupported_scheme():
 
 def test_crawl_api_invalid_max_depth():
     """Verify max_depth out of bounds (< 0 or > 10) returns 422 validation error."""
-    # max_depth < 0
     res_neg = client.post("/api/v1/crawl", json={"url": "https://example.com", "max_depth": -1})
     assert res_neg.status_code == 422
 
-    # max_depth > 10
     res_large = client.post("/api/v1/crawl", json={"url": "https://example.com", "max_depth": 15})
     assert res_large.status_code == 422
 
 
 def test_crawl_api_invalid_max_pages():
     """Verify max_pages out of bounds (< 1 or > 200) returns 422 validation error."""
-    # max_pages < 1
     res_zero = client.post("/api/v1/crawl", json={"url": "https://example.com", "max_pages": 0})
     assert res_zero.status_code == 422
 
-    # max_pages > 200
     res_huge = client.post("/api/v1/crawl", json={"url": "https://example.com", "max_pages": 500})
     assert res_huge.status_code == 422
 
 
 # ------------------------------------------------------------------------------
-# 3. Successful Crawl Request (200 OK)
+# 3. Successful Asynchronous Crawl Request (200 OK - Immediate Return)
 # ------------------------------------------------------------------------------
 
-def test_crawl_api_success_mocked():
-    """Verify valid crawl request invokes crawler and returns structured CrawlResponse JSON."""
-    mock_crawl_result = CrawlResult(
-        starting_url="https://example.com",
-        normalized_starting_url="https://example.com/",
-        domain="example.com",
-        total_pages=2,
-        successful_pages=2,
-        failed_pages=0,
-        total_internal_links=3,
-        total_external_links=1,
-        max_depth_reached=1,
-        pages=[
-            PageResult(
-                url="https://example.com/",
-                normalized_url="https://example.com/",
-                parent_url=None,
-                depth=0,
-                title="Example Home",
-                status_code=200,
-                content_type="text/html",
-                internal_links=["https://example.com/about"],
-                external_links=["https://external.org"],
-                crawl_success=True,
-                response_time=0.12,
-            ),
-            PageResult(
-                url="https://example.com/about",
-                normalized_url="https://example.com/about",
-                parent_url="https://example.com/",
-                depth=1,
-                title="About Us",
-                status_code=200,
-                content_type="text/html",
-                internal_links=[],
-                external_links=[],
-                crawl_success=True,
-                response_time=0.08,
-            ),
-        ],
-        errors=[],
-        duration_seconds=0.25,
-    )
+def test_crawl_api_queues_celery_task_and_returns_immediately():
+    """Verify valid crawl request creates DB record, queues Celery task, and returns QUEUED status immediately."""
+    mock_task = MagicMock()
+    mock_task.id = "test-task-uuid-12345"
 
-    with patch("app.api.v1.crawl.WebAtlasCrawler") as MockCrawlerCls:
-        mock_instance = AsyncMock()
-        mock_instance.crawl.return_value = mock_crawl_result
-        MockCrawlerCls.return_value = mock_instance
-
+    with patch("app.api.v1.crawl.execute_crawl_task.delay", return_value=mock_task) as mock_delay:
         payload = {
             "url": "https://example.com",
             "max_depth": 2,
-            "max_pages": 10,
+            "max_pages": 50,
         }
 
         response = client.post("/api/v1/crawl", json=payload)
@@ -130,28 +83,66 @@ def test_crawl_api_success_mocked():
         data = response.json()
         assert data["starting_url"] == "https://example.com"
         assert data["domain"] == "example.com"
-        assert data["total_pages"] == 2
-        assert len(data["pages"]) == 2
-        assert data["pages"][0]["title"] == "Example Home"
-        assert data["pages"][1]["parent_url"] == "https://example.com/"
+        assert data["status"] == "QUEUED"
+        assert data["task_id"] == "test-task-uuid-12345"
+        assert data["crawl_id"] is not None
+
+        mock_delay.assert_called_once()
+        _, kwargs = mock_delay.call_args
+        assert kwargs["crawl_id"] == data["crawl_id"]
+        assert kwargs["starting_url"] == "https://example.com"
+        assert kwargs["max_depth"] == 2
+        assert kwargs["max_pages"] == 50
 
 
 # ------------------------------------------------------------------------------
-# 4. Error Handling Tests (400 Bad Request / Clean Detail)
+# 4. Status & Progress Tracking Endpoint Tests (GET /api/v1/crawl/{crawl_id}/status)
 # ------------------------------------------------------------------------------
 
-def test_crawl_api_fetch_error_handling():
-    """Verify network or fetch errors return clean HTTP 400 error without exposing stack traces."""
-    with patch("app.api.v1.crawl.WebAtlasCrawler") as MockCrawlerCls:
-        mock_instance = AsyncMock()
-        mock_instance.crawl.side_effect = FetchError("DNS resolution failed for target host", url="https://unreachable.test")
-        MockCrawlerCls.return_value = mock_instance
+def test_get_crawl_status_progress_metrics_and_percentage():
+    """Verify status endpoint returns pages_discovered, pages_crawled, pages_failed, and calculated progress_percent."""
+    mock_task = MagicMock()
+    mock_task.id = "progress-status-task-id"
 
-        payload = {"url": "https://unreachable.test"}
-        response = client.post("/api/v1/crawl", json=payload)
+    with patch("app.api.v1.crawl.execute_crawl_task.delay", return_value=mock_task):
+        init_res = client.post("/api/v1/crawl", json={"url": "https://progresscheck.com", "max_pages": 40})
+        assert init_res.status_code == 200
+        crawl_id = init_res.json()["crawl_id"]
 
-        assert response.status_code == 400
-        data = response.json()
-        assert "detail" in data
-        assert "Unable to reach target website" in data["detail"]
-        assert "traceback" not in response.text.lower()
+    db = SessionLocal()
+    try:
+        update_crawl_running_status(db, crawl_id)
+        update_crawl_progress(
+            db,
+            crawl_id=crawl_id,
+            pages_discovered=30,
+            pages_crawled=20,
+            pages_failed=2,
+            current_depth=1,
+            max_depth_reached=1,
+        )
+    finally:
+        db.close()
+
+    status_res = client.get(f"/api/v1/crawl/{crawl_id}/status")
+    assert status_res.status_code == 200
+
+    data = status_res.json()
+    assert data["crawl_id"] == crawl_id
+    assert data["status"] == "RUNNING"
+    assert data["pages_discovered"] == 30
+    assert data["pages_crawled"] == 20
+    assert data["pages_failed"] == 2
+    assert data["successful_pages"] == 18
+    assert data["current_depth"] == 1
+    assert data["max_pages"] == 40
+    # progress_percent = 20 / 40 * 100 = 50.0%
+    assert data["progress_percent"] == 50.0
+    assert data["started_at"] is not None
+
+
+def test_get_crawl_status_not_found():
+    """Verify 404 response for non-existent crawl status check."""
+    response = client.get("/api/v1/crawl/999999/status")
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()

@@ -36,6 +36,8 @@ async def list_crawl_history(
     return [
         CrawlHistoryItem(
             crawl_id=record.id,
+            task_id=record.task_id,
+            status=record.status,
             starting_url=record.starting_url,
             normalized_starting_url=record.normalized_starting_url,
             domain=record.domain,
@@ -95,6 +97,8 @@ async def get_crawl(crawl_id: int, db: Session = Depends(get_db)) -> CrawlRespon
 
     return CrawlResponse(
         crawl_id=record.id,
+        task_id=record.task_id,
+        status=record.status,
         starting_url=record.starting_url,
         normalized_starting_url=record.normalized_starting_url,
         domain=record.domain,

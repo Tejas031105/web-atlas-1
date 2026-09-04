@@ -32,11 +32,18 @@ class CrawlModel(Base):
     total_external_links: Mapped[int] = mapped_column(Integer, default=0)
 
     max_depth_requested: Mapped[int] = mapped_column(Integer, default=2)
+    max_pages_requested: Mapped[int] = mapped_column(Integer, default=50)
+    pages_discovered: Mapped[int] = mapped_column(Integer, default=0)
+    current_depth: Mapped[int] = mapped_column(Integer, default=0)
     max_depth_reached: Mapped[int] = mapped_column(Integer, default=0)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
-    status: Mapped[str] = mapped_column(String(50), default="completed")
+    render_mode: Mapped[str] = mapped_column(String(50), default="auto")
+    status: Mapped[str] = mapped_column(String(50), default="QUEUED")
+    task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     errors_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

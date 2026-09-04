@@ -42,6 +42,21 @@ class CrawlRequest(BaseModel):
         le=60.0,
         description="HTTP request timeout in seconds per page fetch",
     )
+    render_mode: Optional[str] = Field(
+        default="auto",
+        description="Rendering strategy: auto (HTTPX with JS shell fallback), httpx (HTTPX only), or playwright (browser)",
+    )
+
+    @field_validator("render_mode")
+    @classmethod
+    def validate_render_mode(cls, value: Optional[str]) -> str:
+        """Ensure render_mode is one of 'auto', 'httpx', 'playwright'."""
+        if not value:
+            return "auto"
+        val = value.strip().lower()
+        if val not in ("auto", "httpx", "playwright"):
+            raise ValueError("render_mode must be one of: 'auto', 'httpx', or 'playwright'")
+        return val
 
     @field_validator("url")
     @classmethod
@@ -86,25 +101,52 @@ class CrawlResponse(BaseModel):
     """Complete summary and page collection returned by crawl operation."""
 
     crawl_id: Optional[int] = Field(default=None, description="Unique primary key database identifier for the crawl session")
+    task_id: Optional[str] = Field(default=None, description="Celery background task ID")
+    status: str = Field(default="QUEUED", description="Crawl job status: QUEUED, RUNNING, COMPLETED, FAILED")
     starting_url: str
     normalized_starting_url: str
     domain: str
-    total_pages: int
-    successful_pages: int
-    failed_pages: int
-    total_internal_links: int
-    total_external_links: int
-    max_depth_reached: int
+    total_pages: int = 0
+    successful_pages: int = 0
+    failed_pages: int = 0
+    total_internal_links: int = 0
+    total_external_links: int = 0
+    max_depth_reached: int = 0
     pages: List[PageResponse] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
-    duration_seconds: float
+    duration_seconds: float = 0.0
     completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CrawlStatusResponse(BaseModel):
+    """Detailed progress and execution status for a crawl session."""
+
+    crawl_id: int
+    task_id: Optional[str] = None
+    status: str
+    starting_url: str
+    domain: str
+    pages_discovered: int = 0
+    pages_crawled: int = 0
+    pages_failed: int = 0
+    successful_pages: int = 0
+    current_depth: int = 0
+    max_depth: int = 2
+    max_pages: int = 50
+    progress_percent: Optional[float] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error: Optional[str] = None
+    errors: List[str] = Field(default_factory=list)
+    duration_seconds: float = 0.0
 
 
 class CrawlHistoryItem(BaseModel):
     """Lightweight summary item for crawl history listings."""
 
     crawl_id: int
+    task_id: Optional[str] = None
+    status: str = "COMPLETED"
     starting_url: str
     normalized_starting_url: str
     domain: str

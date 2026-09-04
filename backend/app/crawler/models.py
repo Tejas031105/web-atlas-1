@@ -31,6 +31,7 @@ class CrawlConfig(BaseModel):
     respect_robots_txt: bool = Field(default=True, description="Respect robots.txt restrictions.")
     follow_redirects: bool = Field(default=True, description="Follow HTTP redirects.")
     max_response_size: int = Field(default=5_242_880, description="Max HTML response size in bytes (5MB).")
+    render_mode: str = Field(default="auto", description="Rendering strategy: auto, httpx, or playwright.")
 
 
 class PageResult(BaseModel):

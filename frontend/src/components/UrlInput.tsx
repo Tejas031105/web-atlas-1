@@ -13,7 +13,7 @@ import {
   Sparkles,
   Info,
 } from 'lucide-react';
-import { CrawlRequest } from '../types';
+import { CrawlRequest, RenderMode } from '../types';
 
 interface UrlInputProps {
   onStartCrawl: (request: CrawlRequest) => void;
@@ -29,6 +29,7 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onStartCrawl, isCrawling }) 
   const [requestDelay, setRequestDelay] = useState<number>(0.25);
   const [timeout, setTimeoutVal] = useState<number>(10);
   const [respectRobotsTxt, setRespectRobotsTxt] = useState<boolean>(true);
+  const [renderMode, setRenderMode] = useState<RenderMode>('auto');
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -43,6 +44,9 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onStartCrawl, isCrawling }) 
         if (typeof parsed.requestDelay === 'number') setRequestDelay(parsed.requestDelay);
         if (typeof parsed.timeout === 'number') setTimeoutVal(parsed.timeout);
         if (typeof parsed.respectRobotsTxt === 'boolean') setRespectRobotsTxt(parsed.respectRobotsTxt);
+        if (parsed.renderMode && ['auto', 'httpx', 'playwright'].includes(parsed.renderMode)) {
+          setRenderMode(parsed.renderMode as RenderMode);
+        }
       }
     } catch {
       // Ignore localStorage read errors
@@ -56,6 +60,7 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onStartCrawl, isCrawling }) 
     requestDelay: number;
     timeout: number;
     respectRobotsTxt: boolean;
+    renderMode: RenderMode;
   }) => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
@@ -141,6 +146,7 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onStartCrawl, isCrawling }) 
       requestDelay,
       timeout,
       respectRobotsTxt,
+      renderMode,
     });
 
     onStartCrawl({
@@ -150,6 +156,7 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onStartCrawl, isCrawling }) 
       request_delay: requestDelay,
       respect_robots_txt: respectRobotsTxt,
       timeout: timeout,
+      render_mode: renderMode,
     });
   };
 
@@ -277,9 +284,37 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onStartCrawl, isCrawling }) 
           )}
 
           {/* Primary Configuration Controls Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-1">
+
+            {/* Control 1: Render Mode */}
+            <div className="p-3.5 bg-[#F5F8FC] border border-[#CBD8E6] rounded-xl space-y-2 font-sans shadow-xs flex flex-col justify-between">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[#526174] text-xs font-semibold">
+                  <div className="flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-[#6366F1] shrink-0" />
+                    <span>JS Render Mode</span>
+                  </div>
+                  <span className="font-mono text-[11px] text-[#2563EB] font-bold uppercase">{renderMode}</span>
+                </div>
+                <select
+                  value={renderMode}
+                  onChange={(e) => setRenderMode(e.target.value as RenderMode)}
+                  disabled={isCrawling}
+                  className="w-full bg-[#EDF3F9] border border-[#BFCFE0] text-[#172033] rounded-lg px-3 py-2 focus:bg-[#F5F8FC] focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] font-sans text-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <option value="auto">Auto — Recommended</option>
+                  <option value="httpx">HTTPX — Static pages</option>
+                  <option value="playwright">Playwright — JavaScript pages</option>
+                </select>
+              </div>
+              <p className="text-[11px] text-[#718096] leading-tight">
+                {renderMode === 'auto' && 'Uses HTTPX first and Playwright when JavaScript rendering is needed.'}
+                {renderMode === 'httpx' && 'Fastest option for static HTML websites.'}
+                {renderMode === 'playwright' && 'Uses a real browser to render JavaScript-heavy pages.'}
+              </p>
+            </div>
             
-            {/* Control 1: Max Depth */}
+            {/* Control 2: Max Depth */}
             <div className="p-3.5 bg-[#F5F8FC] border border-[#CBD8E6] rounded-xl space-y-2 font-sans shadow-xs">
               <div className="flex items-center justify-between text-[#526174] text-xs font-semibold">
                 <div className="flex items-center gap-1.5">
@@ -303,7 +338,7 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onStartCrawl, isCrawling }) 
               </select>
             </div>
 
-            {/* Control 2: Request Delay */}
+            {/* Control 3: Request Delay */}
             <div className="p-3.5 bg-[#F5F8FC] border border-[#CBD8E6] rounded-xl space-y-2 font-sans shadow-xs">
               <div className="flex items-center justify-between text-[#526174] text-xs font-semibold">
                 <div className="flex items-center gap-1.5">

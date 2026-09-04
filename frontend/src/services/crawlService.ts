@@ -1,10 +1,10 @@
 import axios from 'axios';
-import { CrawlRequest, CrawlResponse, CrawlErrorResponse } from '../types';
+import { CrawlRequest, CrawlResponse, CrawlStatusResponse, CrawlErrorResponse } from '../types';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   import.meta.env.VITE_API_URL ||
-  'http://127.0.0.1:8000';
+  'http://localhost:8000';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -27,10 +27,10 @@ export const checkHealth = async (): Promise<boolean> => {
 };
 
 /**
- * Execute a website crawl request against POST /api/v1/crawl.
+ * Enqueue a website crawl request against POST /api/v1/crawl.
  *
  * @param request Crawl configuration parameters
- * @returns CrawlResponse containing summary metrics and discovered page lists
+ * @returns CrawlResponse containing crawl session ID and QUEUED status
  */
 export const startCrawl = async (request: CrawlRequest): Promise<CrawlResponse> => {
   try {
@@ -40,6 +40,8 @@ export const startCrawl = async (request: CrawlRequest): Promise<CrawlResponse> 
       max_pages: request.max_pages,
       request_delay: request.request_delay ?? 0.1,
       respect_robots_txt: request.respect_robots_txt ?? true,
+      render_mode: request.render_mode ?? 'auto',
+      timeout: request.timeout ?? 10.0,
     });
     return response.data;
   } catch (error) {
@@ -59,5 +61,22 @@ export const startCrawl = async (request: CrawlRequest): Promise<CrawlResponse> 
       throw new Error(`Crawl request failed: ${error.message}`);
     }
     throw new Error('An unexpected error occurred while processing the crawl.');
+  }
+};
+
+/**
+ * Retrieve execution status and metric counters of a background crawl session via GET /api/v1/crawl/{crawl_id}/status.
+ *
+ * @param crawlId Database ID of the crawl session
+ */
+export const fetchCrawlStatus = async (crawlId: number): Promise<CrawlStatusResponse> => {
+  try {
+    const response = await apiClient.get<CrawlStatusResponse>(`/api/v1/crawl/${crawlId}/status`);
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data?.detail) {
+      throw new Error(error.response.data.detail);
+    }
+    throw new Error(`Failed to check status for crawl #${crawlId}.`);
   }
 };
