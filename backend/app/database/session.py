@@ -2,7 +2,7 @@
 
 import os
 from typing import Generator
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, DeclarativeBase, Session
 
 # Define path to SQLite database file inside project data/ directory
@@ -13,12 +13,20 @@ os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "webatlas.db")
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 
-# Create SQLite SQLAlchemy engine with check_same_thread=False for FastAPI concurrency
+# Create SQLite SQLAlchemy engine with check_same_thread=False and 30s busy timeout for FastAPI/Celery concurrency
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False, "timeout": 30},
     echo=False,
 )
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Enable Write-Ahead Logging (WAL) mode for concurrent SQLite reads and writes."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -61,7 +69,29 @@ def _auto_migrate_schema() -> None:
                     conn.execute(text("ALTER TABLE crawls ADD COLUMN completed_at DATETIME"))
                 if "render_mode" not in col_names:
                     conn.execute(text("ALTER TABLE crawls ADD COLUMN render_mode VARCHAR(50) DEFAULT 'auto'"))
-                conn.commit()
+
+            page_cols_res = conn.execute(text("PRAGMA table_info(pages)")).fetchall()
+            page_cols = [r[1] for r in page_cols_res]
+            if page_cols_res:
+                if "meta_description" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN meta_description TEXT"))
+                if "h1" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN h1 VARCHAR(512)"))
+                if "headings_json" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN headings_json TEXT"))
+                if "main_text" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN main_text TEXT"))
+                if "primary_keyword" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN primary_keyword VARCHAR(255)"))
+                if "related_keywords_json" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN related_keywords_json TEXT"))
+                if "keyword_score" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN keyword_score FLOAT"))
+                if "topic" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN topic VARCHAR(255)"))
+                if "cluster_id" not in page_cols:
+                    conn.execute(text("ALTER TABLE pages ADD COLUMN cluster_id VARCHAR(255)"))
+            conn.commit()
     except Exception:
         pass
 

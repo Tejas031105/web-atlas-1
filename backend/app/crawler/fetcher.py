@@ -1,5 +1,6 @@
 """HTTP Fetcher using httpx for WebAtlas Crawler."""
 
+import asyncio
 import time
 import logging
 from typing import Tuple, Optional
@@ -69,7 +70,10 @@ class AsyncFetcher:
         start_time = time.perf_counter()
         try:
             logger.info("Fetching URL: %s", url)
-            response = await self.client.get(url)
+            response = await asyncio.wait_for(
+                self.client.get(url),
+                timeout=self.config.timeout + 5.0,
+            )
             elapsed_time = round(time.perf_counter() - start_time, 4)
 
             final_url = str(response.url)
@@ -120,7 +124,7 @@ class AsyncFetcher:
                 is_html=True,
             )
 
-        except httpx.TimeoutException as exc:
+        except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
             elapsed_time = round(time.perf_counter() - start_time, 4)
             raise FetchError(f"Request timeout after {self.config.timeout}s: {exc}", url=url) from exc
         except httpx.NetworkError as exc:

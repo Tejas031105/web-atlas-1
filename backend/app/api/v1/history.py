@@ -71,10 +71,15 @@ async def get_crawl(crawl_id: int, db: Session = Depends(get_db)) -> CrawlRespon
         )
 
     # Reconstruct PageResponse list from PageModel records
+    cluster_map = {c.cluster_id: c.cluster_name for c in record.clusters} if record.clusters else {}
     pages_list: List[PageResponse] = []
     for p in record.pages:
         int_links = json.loads(p.internal_links_json) if p.internal_links_json else []
         ext_links = json.loads(p.external_links_json) if p.external_links_json else []
+        rel_kws = json.loads(p.related_keywords_json) if p.related_keywords_json else []
+        hdgs = json.loads(p.headings_json) if p.headings_json else []
+        c_name = cluster_map.get(p.cluster_id) if p.cluster_id else None
+
         pages_list.append(
             PageResponse(
                 url=p.url,
@@ -86,6 +91,16 @@ async def get_crawl(crawl_id: int, db: Session = Depends(get_db)) -> CrawlRespon
                 content_type=p.content_type,
                 internal_links=int_links,
                 external_links=ext_links,
+                meta_description=p.meta_description,
+                h1=p.h1,
+                headings=hdgs,
+                main_text=p.main_text,
+                primary_keyword=p.primary_keyword,
+                related_keywords=rel_kws,
+                keyword_score=p.keyword_score,
+                topic=p.topic,
+                cluster_id=p.cluster_id,
+                cluster_name=c_name,
                 crawl_success=p.crawl_success,
                 error_message=p.error_message,
                 response_time=p.response_time,

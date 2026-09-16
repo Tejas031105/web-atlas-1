@@ -5,13 +5,80 @@ import logging
 from typing import List, Optional
 from sqlalchemy.orm import Session, joinedload
 
+from collections import defaultdict
 from app.crawler.models import CrawlResult, CrawlConfig
-from app.models.crawl import CrawlModel, PageModel
+from app.models.crawl import CrawlModel, PageModel, ClusterModel
+from app.analysis.keyword_analyzer import KeywordExtractor, TopicClusterer
 
 logger = logging.getLogger(__name__)
 
 
 from datetime import datetime, timezone
+
+
+def process_keywords_and_clusters_for_crawl(db: Session, crawl_record: CrawlModel) -> None:
+    """Analyze all discovered pages, extract primary & related keywords, group into clusters, and persist to database."""
+    try:
+        pages = crawl_record.pages
+        if not pages:
+            return
+
+        pages_analysis_data = []
+        page_model_map = {}
+
+        for page in pages:
+            page_model_map[page.id] = page
+            headings = json.loads(page.headings_json) if page.headings_json else []
+
+            kw_data = KeywordExtractor.analyze_page(
+                url=page.url,
+                title=page.title,
+                meta_description=page.meta_description,
+                h1=page.h1,
+                headings=headings,
+                main_text=page.main_text,
+            )
+            kw_data["db_id"] = page.id
+            kw_data["url"] = page.url
+            kw_data["title"] = page.title
+            pages_analysis_data.append(kw_data)
+
+        # Topic Clustering
+        clustered_pages, clusters_summary = TopicClusterer.cluster_pages(pages_analysis_data)
+
+        # Clear existing clusters for this crawl if any
+        db.query(ClusterModel).filter(ClusterModel.crawl_id == crawl_record.id).delete()
+
+        # Add ClusterModel records
+        for c_info in clusters_summary:
+            cluster_rec = ClusterModel(
+                crawl_id=crawl_record.id,
+                cluster_id=c_info["cluster_id"],
+                cluster_name=c_info["cluster_name"],
+                cluster_primary_topic=c_info["cluster_primary_topic"],
+                keywords_json=json.dumps(c_info["keywords"]),
+                page_count=c_info["page_count"],
+            )
+            db.add(cluster_rec)
+
+        # Update PageModel records with keyword metadata
+        for p_data in clustered_pages:
+            db_id = p_data.get("db_id")
+            page_rec = page_model_map.get(db_id)
+            if page_rec:
+                page_rec.primary_keyword = p_data.get("primary_keyword")
+                page_rec.related_keywords_json = json.dumps(p_data.get("related_keywords", []))
+                page_rec.keyword_score = p_data.get("keyword_score")
+                page_rec.topic = p_data.get("topic")
+                page_rec.cluster_id = p_data.get("cluster_id")
+
+        db.commit()
+        db.refresh(crawl_record)
+        logger.info("Successfully completed keyword mapping & clustering for crawl #%d (%d clusters)", crawl_record.id, len(clusters_summary))
+    except Exception as err:
+        db.rollback()
+        logger.error("Failed to process keyword mapping & clustering for crawl #%d: %s", crawl_record.id, err)
+
 
 def create_initial_crawl(
     db: Session,
@@ -145,7 +212,7 @@ def update_crawl_status(
 def update_crawl_result(
     db: Session, crawl_id: int, crawl_result: CrawlResult
 ) -> Optional[CrawlModel]:
-    """Update existing crawl record with completed crawl statistics and discovered pages."""
+    """Update existing crawl record with completed crawl statistics, discovered pages, and keyword/cluster analysis."""
     try:
         crawl_record = db.query(CrawlModel).filter(CrawlModel.id == crawl_id).first()
         if not crawl_record:
@@ -175,6 +242,15 @@ def update_crawl_result(
                 title=page.title,
                 status_code=page.status_code,
                 content_type=page.content_type,
+                meta_description=getattr(page, "meta_description", None),
+                h1=getattr(page, "h1", None),
+                headings_json=json.dumps(getattr(page, "headings", [])) if getattr(page, "headings", None) else None,
+                main_text=getattr(page, "main_text", None),
+                primary_keyword=getattr(page, "primary_keyword", None),
+                related_keywords_json=json.dumps(getattr(page, "related_keywords", [])) if getattr(page, "related_keywords", None) else None,
+                keyword_score=getattr(page, "keyword_score", None),
+                topic=getattr(page, "topic", None),
+                cluster_id=getattr(page, "cluster_id", None),
                 crawl_success=page.crawl_success,
                 error_message=page.error_message,
                 response_time=page.response_time,
@@ -186,6 +262,10 @@ def update_crawl_result(
 
         db.commit()
         db.refresh(crawl_record)
+
+        # Run post-crawl Keyword Mapping & Topic Clustering
+        process_keywords_and_clusters_for_crawl(db, crawl_record)
+
         logger.info(
             "Successfully updated crawl #%d with %d pages (status: %s)",
             crawl_record.id,
@@ -202,7 +282,7 @@ def update_crawl_result(
 def save_crawl_result(
     db: Session, crawl_result: CrawlResult, request_config: CrawlConfig
 ) -> CrawlModel:
-    """Transactionally save a completed crawl result and its pages to SQLite."""
+    """Transactionally save a completed crawl result, its pages, and keyword/cluster analysis to SQLite."""
     try:
         crawl_record = CrawlModel(
             starting_url=crawl_result.starting_url,
@@ -221,9 +301,8 @@ def save_crawl_result(
         )
 
         db.add(crawl_record)
-        db.flush()  # Generate primary key ID for crawl_record
+        db.flush()
 
-        # Create page records for all discovered pages
         for page in crawl_result.pages:
             page_record = PageModel(
                 crawl_id=crawl_record.id,
@@ -234,6 +313,15 @@ def save_crawl_result(
                 title=page.title,
                 status_code=page.status_code,
                 content_type=page.content_type,
+                meta_description=getattr(page, "meta_description", None),
+                h1=getattr(page, "h1", None),
+                headings_json=json.dumps(getattr(page, "headings", [])) if getattr(page, "headings", None) else None,
+                main_text=getattr(page, "main_text", None),
+                primary_keyword=getattr(page, "primary_keyword", None),
+                related_keywords_json=json.dumps(getattr(page, "related_keywords", [])) if getattr(page, "related_keywords", None) else None,
+                keyword_score=getattr(page, "keyword_score", None),
+                topic=getattr(page, "topic", None),
+                cluster_id=getattr(page, "cluster_id", None),
                 crawl_success=page.crawl_success,
                 error_message=page.error_message,
                 response_time=page.response_time,
@@ -245,6 +333,10 @@ def save_crawl_result(
 
         db.commit()
         db.refresh(crawl_record)
+
+        # Run post-crawl Keyword Mapping & Topic Clustering
+        process_keywords_and_clusters_for_crawl(db, crawl_record)
+
         logger.info("Successfully persisted crawl #%d for %s (%d pages)", crawl_record.id, crawl_record.domain, crawl_record.total_pages)
         return crawl_record
 
@@ -265,10 +357,10 @@ def get_crawl_history(db: Session, limit: int = 100) -> List[CrawlModel]:
 
 
 def get_crawl_by_id(db: Session, crawl_id: int) -> Optional[CrawlModel]:
-    """Retrieve single crawl record and eager-load associated pages by ID."""
+    """Retrieve single crawl record and eager-load associated pages and clusters by ID."""
     return (
         db.query(CrawlModel)
-        .options(joinedload(CrawlModel.pages))
+        .options(joinedload(CrawlModel.pages), joinedload(CrawlModel.clusters))
         .filter(CrawlModel.id == crawl_id)
         .first()
     )

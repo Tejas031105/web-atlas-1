@@ -1,5 +1,6 @@
 """robots.txt parsing and caching manager."""
 
+import asyncio
 import logging
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
@@ -32,10 +33,16 @@ class RobotsChecker:
         try:
             logger.info("Fetching robots.txt from %s", robots_url)
             if client is not None:
-                response = await client.get(robots_url, timeout=self.timeout, follow_redirects=True)
+                response = await asyncio.wait_for(
+                    client.get(robots_url, timeout=self.timeout, follow_redirects=True),
+                    timeout=self.timeout + 2.0,
+                )
             else:
                 async with httpx.AsyncClient(headers={"User-Agent": self.user_agent}) as temp_client:
-                    response = await temp_client.get(robots_url, timeout=self.timeout, follow_redirects=True)
+                    response = await asyncio.wait_for(
+                        temp_client.get(robots_url, timeout=self.timeout, follow_redirects=True),
+                        timeout=self.timeout + 2.0,
+                    )
 
             if response.status_code == 200:
                 rfp.parse(response.text.splitlines())

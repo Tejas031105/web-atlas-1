@@ -21,8 +21,42 @@ class Settings(BaseSettings):
     
     ALLOWED_ORIGINS: List[str] = [
         "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
     ]
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        default_origins = [
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://localhost:5175",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5174",
+            "http://127.0.0.1:5175",
+        ]
+        if isinstance(v, str):
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                try:
+                    origins = json.loads(v)
+                except Exception:
+                    origins = [i.strip() for i in v.strip("[]").split(",") if i.strip()]
+            else:
+                origins = [i.strip() for i in v.split(",") if i.strip()]
+        elif isinstance(v, list):
+            origins = list(v)
+        else:
+            origins = list(default_origins)
+
+        for default in default_origins:
+            if default not in origins:
+                origins.append(default)
+        return origins
 
     # Celery & Redis Configuration
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"

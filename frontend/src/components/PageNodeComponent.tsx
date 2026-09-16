@@ -131,7 +131,7 @@ export const PageNodeComponent: React.FC<NodeProps> = memo(({ data, selected }) 
           </div>
         </div>
 
-        {/* Middle Section: Title & URL */}
+        {/* Middle Section: Title & URL & SEO Keyword Badge */}
         <div>
           <h4
             className="font-bold text-[#172033] truncate text-xs leading-snug"
@@ -145,6 +145,19 @@ export const PageNodeComponent: React.FC<NodeProps> = memo(({ data, selected }) 
           >
             {displayPath}
           </p>
+
+          {nodeData.primaryKeyword && (
+            <div className="mt-1.5 flex items-center gap-1 flex-wrap">
+              <span className="px-1.5 py-0.5 bg-[#DBEAFE] text-[#2563EB] rounded text-[9.5px] font-semibold truncate max-w-[170px]" title={`Primary KW: ${nodeData.primaryKeyword}`}>
+                🔑 {nodeData.primaryKeyword}
+              </span>
+              {nodeData.clusterId && (
+                <span className="px-1 py-0.5 bg-[#E2E8F0] text-[#475569] rounded text-[9px] font-mono" title={`Cluster: ${nodeData.clusterName || nodeData.clusterId}`}>
+                  {nodeData.clusterId}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Bottom Section: Response Time & Meta */}

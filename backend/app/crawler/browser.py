@@ -1,5 +1,6 @@
 """Browser-based rendering service using Playwright Chromium for WebAtlas."""
 
+import asyncio
 import time
 import logging
 from typing import Optional
@@ -34,11 +35,13 @@ class BrowserRenderer:
     async def __aenter__(self):
         """Initialize Playwright and launch Chromium browser instance."""
         try:
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=self.headless,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-            )
+            if not self._playwright:
+                self._playwright = await async_playwright().start()
+            if not self._browser:
+                self._browser = await self._playwright.chromium.launch(
+                    headless=self.headless,
+                    args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+                )
             logger.info("Playwright Chromium browser launched successfully (headless=%s)", self.headless)
             return self
         except Exception as err:
@@ -85,7 +88,6 @@ class BrowserRenderer:
         eff_wait_until = wait_until or self.wait_until
         timeout_ms = int(eff_timeout * 1000)
 
-        # Ensure browser is running if called outside async with context manager
         auto_opened_browser = False
         if not self._browser:
             await self.__aenter__()
@@ -103,11 +105,16 @@ class BrowserRenderer:
                 bypass_csp=True,
             )
             page = await context.new_page()
+            page.set_default_navigation_timeout(timeout_ms)
+            page.set_default_timeout(timeout_ms)
 
-            response = await page.goto(
-                norm_url,
-                timeout=timeout_ms,
-                wait_until=eff_wait_until,
+            response = await asyncio.wait_for(
+                page.goto(
+                    norm_url,
+                    timeout=timeout_ms,
+                    wait_until=eff_wait_until,
+                ),
+                timeout=eff_timeout + 5.0,
             )
 
             elapsed_time = round(time.perf_counter() - start_time, 4)
@@ -119,7 +126,7 @@ class BrowserRenderer:
             content_type = content_type_header.split(";")[0].strip() if content_type_header else "text/html"
 
             # Capture fully rendered HTML DOM content after JavaScript execution
-            html_content = await page.content()
+            html_content = await asyncio.wait_for(page.content(), timeout=10.0)
 
             logger.info(
                 "Rendered [%d] %s in %.4fs (HTML length: %d bytes)",
@@ -139,7 +146,7 @@ class BrowserRenderer:
                 is_html=True,
             )
 
-        except PlaywrightTimeoutError as exc:
+        except (PlaywrightTimeoutError, asyncio.TimeoutError) as exc:
             elapsed = round(time.perf_counter() - start_time, 4)
             logger.warning("Playwright navigation timeout for %s after %.1fs", url, eff_timeout)
             raise FetchError(f"Playwright navigation timeout after {eff_timeout}s: {exc}", url=url) from exc

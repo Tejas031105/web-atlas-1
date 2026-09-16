@@ -91,6 +91,16 @@ class PageResponse(BaseModel):
     content_type: Optional[str] = None
     internal_links: List[str] = Field(default_factory=list)
     external_links: List[str] = Field(default_factory=list)
+    meta_description: Optional[str] = None
+    h1: Optional[str] = None
+    headings: List[str] = Field(default_factory=list)
+    main_text: Optional[str] = None
+    primary_keyword: Optional[str] = None
+    related_keywords: List[str] = Field(default_factory=list)
+    keyword_score: Optional[float] = None
+    topic: Optional[str] = None
+    cluster_id: Optional[str] = None
+    cluster_name: Optional[str] = None
     crawl_success: bool
     error_message: Optional[str] = None
     response_time: float

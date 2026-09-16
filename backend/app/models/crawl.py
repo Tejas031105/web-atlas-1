@@ -58,6 +58,13 @@ class CrawlModel(Base):
         order_by="PageModel.depth, PageModel.id",
     )
 
+    # Cascading one-to-many relationship with topic clusters
+    clusters: Mapped[List["ClusterModel"]] = relationship(
+        "ClusterModel",
+        back_populates="crawl",
+        cascade="all, delete-orphan",
+    )
+
 
 class PageModel(Base):
     """Database model for an individual discovered page belonging to a crawl session."""
@@ -81,6 +88,17 @@ class PageModel(Base):
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     content_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
+    meta_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    h1: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    headings_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    main_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    primary_keyword: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    related_keywords_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    keyword_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    topic: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    cluster_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
     crawl_success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     response_time: Mapped[float] = mapped_column(Float, default=0.0)
@@ -94,3 +112,30 @@ class PageModel(Base):
     )
 
     crawl: Mapped["CrawlModel"] = relationship("CrawlModel", back_populates="pages")
+
+
+class ClusterModel(Base):
+    """Database model for a topic cluster grouping semantically related pages."""
+
+    __tablename__ = "clusters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    crawl_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("crawls.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    cluster_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    cluster_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    cluster_primary_topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    keywords_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    page_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    crawl: Mapped["CrawlModel"] = relationship("CrawlModel", back_populates="clusters")
+

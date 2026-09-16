@@ -14,6 +14,10 @@ export interface SiteMapNodeData {
   responseTime: number;
   internalLinksCount: number;
   externalLinksCount: number;
+  primaryKeyword?: string | null;
+  topic?: string | null;
+  clusterId?: string | null;
+  clusterName?: string | null;
   isDimmed: boolean;
   isMatched: boolean;
   page: PageResponse;
@@ -67,7 +71,10 @@ export const isPageMatchingFilter = (page: PageResponse, filters?: FilterOptions
     const urlMatch = page.url.toLowerCase().includes(term);
     const titleMatch = !!(page.title && page.title.toLowerCase().includes(term));
     const statusMatch = !!(page.status_code && page.status_code.toString().includes(term));
-    if (!urlMatch && !titleMatch && !statusMatch) return false;
+    const kwMatch = !!(page.primary_keyword && page.primary_keyword.toLowerCase().includes(term));
+    const topicMatch = !!(page.topic && page.topic.toLowerCase().includes(term));
+    const clusterMatch = !!(page.cluster_id && page.cluster_id.toLowerCase().includes(term));
+    if (!urlMatch && !titleMatch && !statusMatch && !kwMatch && !topicMatch && !clusterMatch) return false;
   }
 
   return true;
@@ -125,7 +132,6 @@ export const buildGraphFromCrawlResponse = (
 
   // 2. Compute tree layout positions level by level (sorting siblings by parent_url)
   depthGroups.forEach((pagesAtDepth, depth) => {
-    // Sort pages at each depth by parent_url so siblings remain grouped together
     pagesAtDepth.sort((a, b) => {
       const parentA = a.parent_url || '';
       const parentB = b.parent_url || '';
@@ -161,6 +167,10 @@ export const buildGraphFromCrawlResponse = (
         responseTime: page.response_time ?? 0,
         internalLinksCount: page.internal_links?.length || 0,
         externalLinksCount: page.external_links?.length || 0,
+        primaryKeyword: page.primary_keyword,
+        topic: page.topic,
+        clusterId: page.cluster_id,
+        clusterName: page.cluster_name,
         isDimmed: isDimmed,
         isMatched: isMatched,
         page: page,

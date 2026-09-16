@@ -35,10 +35,69 @@ export interface PageResponse {
   content_type: string | null;
   internal_links: string[];
   external_links: string[];
+  meta_description?: string | null;
+  h1?: string | null;
+  headings?: string[];
+  main_text?: string | null;
+  primary_keyword?: string | null;
+  related_keywords?: string[];
+  keyword_score?: number | null;
+  topic?: string | null;
+  cluster_id?: string | null;
+  cluster_name?: string | null;
   crawl_success: boolean;
   error_message: string | null;
   response_time: number;
   discovered_at: string;
+}
+
+/** Page keyword summary item returned by GET /api/v1/crawls/{id}/keywords */
+export interface PageKeywordSummary {
+  url: string;
+  title?: string | null;
+  primary_keyword?: string | null;
+  related_keywords: string[];
+  keyword_score?: number | null;
+  topic?: string | null;
+  cluster_id?: string | null;
+  cluster_name?: string | null;
+}
+
+/** Lightweight page item inside cluster details */
+export interface ClusterPageItem {
+  url: string;
+  title?: string | null;
+  primary_keyword?: string | null;
+  topic?: string | null;
+}
+
+/** Topic cluster detail model */
+export interface ClusterDetail {
+  cluster_id: string;
+  cluster_name: string;
+  cluster_primary_topic: string;
+  keywords: string[];
+  page_count: number;
+  pages: ClusterPageItem[];
+}
+
+/** Keywords response model returned by backend GET /api/v1/crawls/{id}/keywords */
+export interface CrawlKeywordsResponse {
+  crawl_id: number;
+  starting_url: string;
+  domain: string;
+  total_pages_analyzed: number;
+  keywords: PageKeywordSummary[];
+}
+
+/** Cluster summary response returned by backend GET /api/v1/crawls/{id}/clusters */
+export interface ClusterSummaryResponse {
+  crawl_id: number;
+  starting_url: string;
+  domain: string;
+  total_pages_analyzed: number;
+  total_clusters: number;
+  clusters: ClusterDetail[];
 }
 
 /** Complete summary report returned by backend POST /api/v1/crawl or GET /api/v1/crawls/{id} */

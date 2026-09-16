@@ -154,7 +154,13 @@ async def get_crawl_status(
         if max_p > 0
         else None
     )
-    errors = json.loads(record.errors_json) if record.errors_json else []
+    errors = []
+    if record.errors_json:
+        try:
+            parsed = json.loads(record.errors_json)
+            errors = parsed if isinstance(parsed, list) else [str(parsed)]
+        except Exception:
+            errors = [str(record.errors_json)]
     error_str = errors[-1] if errors and record.status == "FAILED" else None
 
     return CrawlStatusResponse(

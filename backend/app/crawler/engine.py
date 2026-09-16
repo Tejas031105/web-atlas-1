@@ -80,6 +80,9 @@ class WebAtlasCrawler:
             )
 
         try:
+            if render_mode == RenderMode.PLAYWRIGHT.value and browser_renderer:
+                await browser_renderer.__aenter__()
+
             async with AsyncFetcher(self.config) as fetcher:
                 while queue and len(pages_results) < self.config.max_pages:
                     current_url, parent_url, depth = queue.popleft()
@@ -112,7 +115,7 @@ class WebAtlasCrawler:
                     # Fetch page content according to render_mode
                     fetch_res: Optional[FetchResult] = None
                     try:
-                        if render_mode == RenderMode.PLAYWRIGHT.value:
+                        if render_mode == RenderMode.PLAYWRIGHT.value and browser_renderer:
                             logger.info("Fetching %s directly via Playwright browser renderer", current_url)
                             fetch_res = await browser_renderer.render(current_url)
                         else:
@@ -196,6 +199,10 @@ class WebAtlasCrawler:
                         content_type=fetch_res.content_type,
                         internal_links=parsed_data.internal_links,
                         external_links=parsed_data.external_links,
+                        meta_description=parsed_data.meta_description,
+                        h1=parsed_data.h1,
+                        headings=parsed_data.headings,
+                        main_text=parsed_data.main_text,
                         crawl_success=(fetch_res.status_code < 400),
                         response_time=fetch_res.response_time,
                     )

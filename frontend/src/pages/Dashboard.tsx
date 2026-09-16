@@ -13,16 +13,20 @@ import { useCrawlStatus } from '../hooks/useCrawlStatus';
 import { startCrawl } from '../services/crawlService';
 import { fetchCrawlHistory, fetchCrawlById, deleteCrawlById } from '../services/historyService';
 import { fetchCrawlDiagnostics } from '../services/diagnosticsService';
-import { CrawlRequest, CrawlResponse, PageResponse, CrawlHistoryItem, DiagnosticsResponse } from '../types';
+import { SEOClustersOverview } from '../components/SEOClustersOverview';
+import { fetchCrawlClusters } from '../services/clusterService';
+import { CrawlRequest, CrawlResponse, PageResponse, CrawlHistoryItem, DiagnosticsResponse, ClusterSummaryResponse } from '../types';
 import { AlertCircle, Database, Zap } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const [crawlResult, setCrawlResult] = useState<CrawlResponse | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResponse | null>(null);
+  const [clustersData, setClustersData] = useState<ClusterSummaryResponse | null>(null);
   const [selectedPage, setSelectedPage] = useState<PageResponse | null>(null);
   const [history, setHistory] = useState<CrawlHistoryItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState<boolean>(false);
+  const [clustersLoading, setClustersLoading] = useState<boolean>(false);
   const [historyLoading, setHistoryLoading] = useState<boolean>(false);
   const [isHistoricalView, setIsHistoricalView] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +68,9 @@ export const Dashboard: React.FC = () => {
         const urlMatch = p.url.toLowerCase().includes(term);
         const titleMatch = !!(p.title && p.title.toLowerCase().includes(term));
         const statusMatch = !!(p.status_code && p.status_code.toString().includes(term));
-        if (!urlMatch && !titleMatch && !statusMatch) return false;
+        const kwMatch = !!(p.primary_keyword && p.primary_keyword.toLowerCase().includes(term));
+        const topicMatch = !!(p.topic && p.topic.toLowerCase().includes(term));
+        if (!urlMatch && !titleMatch && !statusMatch && !kwMatch && !topicMatch) return false;
       }
 
       return true;
@@ -94,13 +100,27 @@ export const Dashboard: React.FC = () => {
     }
   }, []);
 
+  const loadClustersForCrawl = useCallback(async (crawlId: number) => {
+    setClustersLoading(true);
+    try {
+      const clData = await fetchCrawlClusters(crawlId);
+      setClustersData(clData);
+    } catch (err) {
+      console.error('Failed to load topic clusters:', err);
+    } finally {
+      setClustersLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (crawlResult && crawlResult.crawl_id) {
       loadDiagnosticsForCrawl(crawlResult.crawl_id);
+      loadClustersForCrawl(crawlResult.crawl_id);
     } else {
       setDiagnostics(null);
+      setClustersData(null);
     }
-  }, [crawlResult, loadDiagnosticsForCrawl]);
+  }, [crawlResult, loadDiagnosticsForCrawl, loadClustersForCrawl]);
 
   // Handle completion/failure transitions from polling hook
   useEffect(() => {
@@ -147,6 +167,7 @@ export const Dashboard: React.FC = () => {
     setError(null);
     setSelectedPage(null);
     setDiagnostics(null);
+    setClustersData(null);
     setIsHistoricalView(false);
 
     try {
@@ -201,6 +222,7 @@ export const Dashboard: React.FC = () => {
         setCrawlResult(null);
         setSelectedPage(null);
         setDiagnostics(null);
+        setClustersData(null);
         setIsHistoricalView(false);
       }
       loadHistory();
@@ -263,6 +285,16 @@ export const Dashboard: React.FC = () => {
 
         {/* Crawl Statistics Summary */}
         <StatsOverview crawlResult={crawlResult} />
+
+        {/* SEO Keyword & Topic Clusters Section */}
+        {crawlResult && (
+          <SEOClustersOverview
+            clustersData={clustersData}
+            pages={crawlResult.pages}
+            onSelectPage={(page) => setSelectedPage(page)}
+            loading={clustersLoading}
+          />
+        )}
 
         {/* Website Health & Diagnostics Section */}
         {crawlResult && (

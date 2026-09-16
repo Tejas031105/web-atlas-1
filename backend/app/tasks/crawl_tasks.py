@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from typing import Any, Dict
 
 from app.tasks.celery_app import celery_app
@@ -47,7 +48,7 @@ def execute_crawl_task(
 
     def handle_progress(stats: dict) -> None:
         nonlocal last_db_update
-        now = asyncio.get_event_loop().time() if asyncio.get_event_loop().is_running() else 0.0
+        now = time.monotonic()
         # Update Celery state metadata (only if bound to active task ID)
         if getattr(self.request, "id", None):
             try:
@@ -55,16 +56,18 @@ def execute_crawl_task(
             except Exception:
                 pass
 
-        # Update database progress metrics (throttled to avoid excessive DB write load)
-        update_crawl_progress(
-            db,
-            crawl_id=crawl_id,
-            pages_discovered=stats.get("pages_discovered", 0),
-            pages_crawled=stats.get("pages_crawled", 0),
-            pages_failed=stats.get("pages_failed", 0),
-            current_depth=stats.get("current_depth", 0),
-            max_depth_reached=stats.get("max_depth_reached", 0),
-        )
+        # Update database progress metrics (throttled to at most once per 0.5s to avoid lock contention)
+        if now - last_db_update >= 0.5 or stats.get("pages_crawled", 0) >= max_pages:
+            last_db_update = now
+            update_crawl_progress(
+                db,
+                crawl_id=crawl_id,
+                pages_discovered=stats.get("pages_discovered", 0),
+                pages_crawled=stats.get("pages_crawled", 0),
+                pages_failed=stats.get("pages_failed", 0),
+                current_depth=stats.get("current_depth", 0),
+                max_depth_reached=stats.get("max_depth_reached", 0),
+            )
 
     try:
         # 1. Update crawl status to RUNNING with started_at timestamp
@@ -102,6 +105,10 @@ def execute_crawl_task(
             crawl_id,
             err,
         )
+        try:
+            db.rollback()
+        except Exception:
+            pass
         update_crawl_status(db, crawl_id, "FAILED", error_message=str(err))
         return {
             "crawl_id": crawl_id,

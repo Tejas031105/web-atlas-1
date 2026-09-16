@@ -1,5 +1,6 @@
 """Celery Application and Configuration Module."""
 
+import sys
 from celery import Celery
 from app.core.config import settings
 
@@ -18,6 +19,7 @@ celery_app.conf.update(
     imports=["app.tasks.crawl_tasks"],
     task_time_limit=3600,  # 1 hour hard timeout limit per task
     task_soft_time_limit=3300,  # 55 minute soft timeout warning limit per task
+    worker_pool="solo" if sys.platform == "win32" else "prefork",
 )
 
 
